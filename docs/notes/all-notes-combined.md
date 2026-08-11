@@ -677,3 +677,62 @@ A: Main issue is staleness. Manage with TTL and cache invalidation on data chang
 
 **Q: How to set up alerting?**
 A: Prometheus rules or Datadog monitors. Critical: error rate > 5%, p99 > 10s, fallback rate > 20%. Warning: cache hit < 30%, token spikes.
+
+
+<div style="page-break-after: always;"></div>
+
+# 07 - Streaming, Multi-Doc Chat, Contextual Compression, Evaluation
+
+## Streaming Responses (Server-Sent Events)
+
+**What:** Tokens appear as generated instead of waiting 3-5s for full response.
+
+**Protocol:** SSE — `Content-Type: text/event-stream`, each chunk is `data: {"token": "...", "done": false}\n\n`
+
+**Implementation:** FastAPI `StreamingResponse` + LangChain's `llm.astream(messages)`. Final event has `done: true` + metadata.
+
+**Why SSE over WebSockets:** Simpler, works through load balancers/CDNs, HTTP-based. Good enough for unidirectional streaming.
+
+**Interview:** "We use SSE with FastAPI StreamingResponse and LangChain's async streaming. First token appears within 200ms. The full pipeline (security, retrieval) runs before streaming starts. Each token is a JSON event; final event includes model used, latency, and sources."
+
+## Multi-Document Chat
+
+**What:** Query across multiple documents in one request. "Compare doc A vs doc B."
+
+**How:** `retrieve_multi()` runs hybrid retrieval per document, pools all results, re-ranks with RRF. Chunks carry source metadata for citation.
+
+**Interview:** "We run hybrid retrieval independently on each document, pool all results, then apply RRF. The most relevant chunks from ANY document float to the top. Source metadata lets the LLM cite which document each fact comes from."
+
+## Contextual Compression
+
+**What:** After retrieval, extract ONLY the query-relevant sentences from each chunk. Throw away noise.
+
+**The problem:** Chunks are 1000 chars, maybe 2 sentences matter. Rest wastes tokens and confuses the LLM.
+
+**How:** One LLM call per chunk: "Extract ONLY sentences relevant to this question." If nothing relevant → chunk removed. Falls back to original on failure.
+
+**Trade-off:** Extra ~500ms per chunk for significantly cleaner context.
+
+**Interview:** "After hybrid retrieval, we compress chunks by extracting only query-relevant sentences via a lightweight LLM call. Typically compresses to 30-40% of original — less noise, fewer tokens, better answers. Graceful degradation: if compression fails, we use the original chunk."
+
+## Evaluation Pipeline
+
+**What:** Automated RAG quality scoring. Answers: "Is my RAG actually working well?"
+
+**Two scores:**
+- Retrieval Relevance (1-5): Did we find the right chunks?
+- Answer Faithfulness (1-5): Is the answer grounded (not hallucinated)?
+
+**How:** Generate synthetic Q&A from doc → run through pipeline → score with LLM-as-judge.
+
+**When to use:** After upload (verify), after parameter changes (compare), as regression test.
+
+**Interview:** "We have automated evaluation measuring retrieval relevance and answer faithfulness (both 1-5). Synthetic Q&A generation + LLM-as-judge scoring. Most RAG systems have zero quality measurement — ours quantifies the impact of any change and catches regressions."
+
+## Key Questions
+
+**Q: Faithfulness vs Relevance?**
+A: Relevance = retrieval stage (right chunks?). Faithfulness = generation stage (answer grounded in context?). Need both high. Can have great chunks but hallucinated answer (low faithfulness), or irrelevant chunks but good general answer (low relevance).
+
+**Q: When to use compression?**
+A: When chunks are large, context window is limited, or precision matters more than latency. Skip for simple/fast queries where speed is priority.
