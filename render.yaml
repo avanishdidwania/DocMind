@@ -1,0 +1,30 @@
+# Render deployment configuration.
+# Render reads this file and knows how to build + deploy your service.
+#
+# Deploy: push to GitHub → Render auto-builds from Dockerfile → serves with HTTPS.
+
+services:
+  - type: web
+    name: docmind-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false  # Set manually in Render dashboard (secret)
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false  # Supabase PGVector connection string
+      - key: PRIMARY_MODEL
+        value: gemini-flash-latest
+      - key: FALLBACK_MODEL
+        value: gemini-flash-latest
+      - key: LANGSMITH_TRACING
+        value: "true"
+      - key: LANGSMITH_PROJECT
+        value: docmind
+      - key: RATE_LIMIT
+        value: "20/minute"
+      - key: DEBUG
+        value: "false"

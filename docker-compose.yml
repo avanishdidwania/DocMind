@@ -1,0 +1,44 @@
+# Docker Compose for local development with optional PostgreSQL + PGVector.
+#
+# Usage:
+#   docker compose up              → app only (Chroma in-memory)
+#   docker compose --profile db up → app + PostgreSQL/PGVector
+#
+
+services:
+  # ─── DocMind API ──────────────────────────────────────────────────────────
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/.env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/docmind
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+
+  # ─── PostgreSQL + PGVector (optional, use --profile db) ───────────────────
+  db:
+    image: pgvector/pgvector:pg16
+    profiles: ["db"]
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: docmind
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:

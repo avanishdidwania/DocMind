@@ -1,0 +1,30 @@
+# Virtual environment (huge, not needed in container)
+.venv/
+__pycache__/
+*.pyc
+
+# Git
+.git/
+.gitignore
+
+# Environment files (secrets — never bake into images)
+.env
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+.kiro/
+
+# Docs & notes (not needed at runtime)
+docs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+test_*.py
+
+# Lock files (we use requirements.txt for Docker)
+uv.lock
