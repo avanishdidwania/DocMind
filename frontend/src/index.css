@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-on-surface font-sans antialiased selection:bg-primary/30 selection:text-white;
+  }
+}
+
+/* Custom Webkit scrollbar for technical dashboard aesthetic */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0c0e14;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #282a30;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #33343b;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(30, 31, 38, 0.7);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-panel-heavy {
+  background: rgba(25, 27, 34, 0.85);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Metallic gradient text */
+.metallic-text {
+  background: linear-gradient(135deg, #ffffff 0%, #a3b3d4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Subtle glow effects */
+.glow-border {
+  position: relative;
+}
+
+.glow-border::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background: linear-gradient(90deg, #8b5cf6, #3b82f6, #06b6d4);
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.glow-border:hover::after {
+  opacity: 0.15;
+}
+
+/* Blink animation for the streaming caret */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.caret-blink {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background-color: #8b5cf6;
+  margin-left: 2px;
+  vertical-align: middle;
+  animation: blink 1s step-end infinite;
+}
