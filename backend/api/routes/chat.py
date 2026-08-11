@@ -131,14 +131,26 @@ async def chat(request: Request, body: ChatRequest):
     sources = []
     retrieval = getattr(request.app.state, "retrieval", None)
 
-    if body.document_id and retrieval:
-        retrieval_result = retrieval.retrieve(
-            query=cleaned_query,
-            document_id=body.document_id,
-        )
-        if retrieval_result.has_context:
-            context = retrieval_result.context
-            sources = retrieval_result.sources
+    if retrieval:
+        if body.document_ids and len(body.document_ids) > 1:
+            # Multi-document retrieval
+            retrieval_result = await retrieval.retrieve_multi(
+                query=cleaned_query,
+                document_ids=body.document_ids,
+            )
+            if retrieval_result.has_context:
+                context = retrieval_result.context
+                sources = retrieval_result.sources
+        elif body.document_id or (body.document_ids and len(body.document_ids) == 1):
+            # Single document retrieval
+            doc_id = body.document_id or body.document_ids[0]
+            retrieval_result = await retrieval.retrieve(
+                query=cleaned_query,
+                document_id=doc_id,
+            )
+            if retrieval_result.has_context:
+                context = retrieval_result.context
+                sources = retrieval_result.sources
 
     # ─── Step 5: LangGraph Agent ───────────────────────────────────────
     # Build the full query with conversation history

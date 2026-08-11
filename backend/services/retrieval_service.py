@@ -39,6 +39,7 @@ class RetrievalResult:
 class RetrievalService:
     """
     Hybrid retrieval: BM25 (keyword) + Vector (semantic) combined with RRF.
+    Optional contextual compression to reduce noise before passing to LLM.
 
     Initialized once, shared via app.state.
     """
@@ -46,6 +47,7 @@ class RetrievalService:
     def __init__(
         self,
         vector_store: VectorStore,
+        compression_service=None,
         k: int = 4,
         bm25_weight: float = 0.4,
         vector_weight: float = 0.6,
@@ -54,12 +56,14 @@ class RetrievalService:
         """
         Args:
             vector_store: The vector store for semantic search
+            compression_service: Optional contextual compression (extracts relevant parts)
             k: Number of final results to return
             bm25_weight: Weight for BM25 results in RRF (keyword matching)
             vector_weight: Weight for vector results in RRF (semantic matching)
             rrf_k: RRF constant (higher = more even blending, 60 is standard)
         """
         self.vector_store = vector_store
+        self.compression = compression_service
         self.k = k
         self.bm25_weight = bm25_weight
         self.vector_weight = vector_weight
@@ -101,9 +105,10 @@ class RetrievalService:
         self._bm25_indexes.pop(document_id, None)
         self._doc_chunks.pop(document_id, None)
 
-    def retrieve(self, query: str, document_id: str | None = None) -> RetrievalResult:
+    async def retrieve(self, query: str, document_id: str | None = None) -> RetrievalResult:
         """
         Hybrid retrieval: combine BM25 + Vector search with RRF.
+        Optionally compresses results to extract only relevant parts.
 
         If BM25 index exists for the document, uses hybrid.
         Otherwise falls back to vector-only (still works, just no keyword boost).
@@ -153,9 +158,79 @@ class RetrievalService:
                 has_context=False,
             )
 
+        # Contextual compression (extract only relevant parts)
+        if self.compression:
+            combined = await self.compression.compress(combined, query)
+
         # Format context for the LLM
         context = self._format_context(combined)
         sources = self._extract_sources(combined)
+
+        return RetrievalResult(
+            context=context,
+            sources=sources,
+            chunks_retrieved=len(combined),
+            has_context=True,
+        )
+
+    async def retrieve_multi(self, query: str, document_ids: list[str]) -> RetrievalResult:
+        """
+        Retrieve across multiple documents simultaneously.
+
+        Use case: "Compare what document A says about X vs document B."
+        Searches each document, combines all results with RRF, returns unified context.
+        """
+        all_vector_results = []
+        all_bm25_results = []
+
+        for doc_id in document_ids:
+            # Vector search per document
+            vector_results = self.vector_store.similarity_search(
+                query=query,
+                k=self.k,
+                document_id=doc_id,
+            )
+            all_vector_results.extend(vector_results)
+
+            # BM25 per document (if index exists)
+            if doc_id in self._bm25_indexes:
+                try:
+                    bm25_results = self._bm25_indexes[doc_id].invoke(query)
+                    all_bm25_results.extend(bm25_results)
+                except Exception:
+                    pass
+
+        if not all_vector_results and not all_bm25_results:
+            return RetrievalResult(
+                context="",
+                sources=[],
+                chunks_retrieved=0,
+                has_context=False,
+            )
+
+        # Combine with RRF
+        if all_bm25_results and all_vector_results:
+            combined = self._reciprocal_rank_fusion(
+                retrievers_results=[all_vector_results, all_bm25_results],
+                weights=[self.vector_weight, self.bm25_weight],
+            )
+        else:
+            combined = all_vector_results[:self.k]
+
+        # Contextual compression
+        if self.compression:
+            combined = await self.compression.compress(combined, query)
+
+        context = self._format_context(combined)
+        sources = self._extract_sources(combined)
+
+        logger.info(
+            "Multi-document retrieval",
+            extra={
+                "document_ids": document_ids,
+                "chunks_retrieved": len(combined),
+            },
+        )
 
         return RetrievalResult(
             context=context,

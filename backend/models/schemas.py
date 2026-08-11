@@ -37,7 +37,8 @@ class ChatRequest(BaseModel):
     """Incoming chat message from the user."""
     message: str = Field(..., min_length=1, max_length=10000, description="User's message")
     session_id: str | None = Field(None, description="Existing session to continue")
-    document_id: str | None = Field(None, description="Document to chat about")
+    document_id: str | None = Field(None, description="Single document to chat about")
+    document_ids: list[str] | None = Field(None, description="Multiple documents to chat across")
     mode: ChatMode = Field(ChatMode.general, description="Chat mode")
 
 

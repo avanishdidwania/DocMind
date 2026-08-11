@@ -29,9 +29,13 @@ from db.vector_store import VectorStore
 from services.document_service import DocumentService
 from services.retrieval_service import RetrievalService
 from services.memory_service import MemoryService
+from services.compression_service import CompressionService
+from services.evaluation_service import EvaluationService
 from api.routes.chat import router as chat_router
 from api.routes.health import router as health_router
 from api.routes.documents import router as documents_router
+from api.routes.stream import router as stream_router
+from api.routes.evaluate import router as evaluate_router
 
 
 # ─── Lifespan ───────────────────────────────────────────────────────────────
@@ -67,10 +71,15 @@ async def lifespan(app: FastAPI):
     # RAG components
     vector_store = VectorStore()
     app.state.vector_store = vector_store
-    retrieval = RetrievalService(vector_store=vector_store)
+    compression = CompressionService(enabled=True)
+    retrieval = RetrievalService(vector_store=vector_store, compression_service=compression)
     app.state.retrieval = retrieval
     app.state.doc_service = DocumentService(vector_store=vector_store, retrieval_service=retrieval)
     app.state.memory = MemoryService(max_history=10)
+    app.state.eval_service = EvaluationService(
+        retrieval_service=retrieval,
+        agent=app.state.agent,
+    )
 
     logger.info(
         "All components initialized",
@@ -158,7 +167,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(chat_router, prefix="/api", tags=["Chat"])
+app.include_router(stream_router, prefix="/api", tags=["Chat"])
 app.include_router(documents_router, prefix="/api", tags=["Documents"])
+app.include_router(evaluate_router, prefix="/api", tags=["Evaluation"])
 app.include_router(health_router, prefix="/api", tags=["System"])
 
 
