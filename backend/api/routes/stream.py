@@ -97,7 +97,7 @@ async def chat_stream(request: Request, body: ChatRequest):
     retrieval = getattr(request.app.state, "retrieval", None)
 
     if body.document_id and retrieval:
-        retrieval_result = await retrieval.retrieve(
+        retrieval_result = await retrieval.retrieve_with_correction(
             query=cleaned_query,
             document_id=body.document_id,
         )

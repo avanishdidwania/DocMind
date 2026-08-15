@@ -143,9 +143,9 @@ async def chat(request: Request, body: ChatRequest):
                 context = retrieval_result.context
                 sources = retrieval_result.sources
         elif body.document_id or (body.document_ids and len(body.document_ids) == 1):
-            # Single document retrieval
+            # Single document — self-correcting retrieval
             doc_id = body.document_id or body.document_ids[0]
-            retrieval_result = await retrieval.retrieve(
+            retrieval_result = await retrieval.retrieve_with_correction(
                 query=cleaned_query,
                 document_id=doc_id,
             )

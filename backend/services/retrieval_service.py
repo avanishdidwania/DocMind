@@ -4,25 +4,28 @@ Retrieval Service — The "R" in RAG.
 Given a user query and a document_id:
 1. Search BOTH vector store (semantic) AND BM25 (keyword)
 2. Combine results with Reciprocal Rank Fusion (RRF)
-3. Format into context for the LLM prompt
-4. Return the formatted context + source references
+3. SELF-CORRECT: Grade retrieval quality. If poor, reformulate query and retry.
+4. Format into context for the LLM prompt
+5. Return the formatted context + source references
 
-Hybrid retrieval solves a real problem:
-- Vector search is great for semantic queries ("how does auth work?")
-- BM25 is great for exact terms ("error code E_CONN_REFUSED", "SKU-7742X")
-- Combining both with RRF gives you the best of both worlds.
+Self-correcting retrieval (Agentic RAG):
+- After retrieval, an LLM grades: "Do these chunks answer the question?"
+- If YES → proceed to generation
+- If NO → reformulate the query (rephrase, expand, decompose) and retrieve again
+- Max 2 attempts to avoid infinite loops
 
-You already built this in langc-course (prod_hybridsearch.py) — now it's
-integrated into a real production system.
+This is what separates "dumb retrieval" from "intelligent retrieval."
 """
 
 import logging
 from dataclasses import dataclass
 
 from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage
 from langchain_community.retrievers import BM25Retriever
 
 from db.vector_store import VectorStore
+from config import settings
 
 logger = logging.getLogger("docmind")
 
@@ -40,6 +43,7 @@ class RetrievalService:
     """
     Hybrid retrieval: BM25 (keyword) + Vector (semantic) combined with RRF.
     Optional contextual compression to reduce noise before passing to LLM.
+    Self-correcting: grades retrieval quality, reformulates and retries if poor.
 
     Initialized once, shared via app.state.
     """
@@ -52,6 +56,7 @@ class RetrievalService:
         bm25_weight: float = 0.4,
         vector_weight: float = 0.6,
         rrf_k: int = 60,
+        max_retrieval_attempts: int = 2,
     ):
         """
         Args:
@@ -61,6 +66,7 @@ class RetrievalService:
             bm25_weight: Weight for BM25 results in RRF (keyword matching)
             vector_weight: Weight for vector results in RRF (semantic matching)
             rrf_k: RRF constant (higher = more even blending, 60 is standard)
+            max_retrieval_attempts: Max times to reformulate and retry (self-correcting)
         """
         self.vector_store = vector_store
         self.compression = compression_service
@@ -68,6 +74,7 @@ class RetrievalService:
         self.bm25_weight = bm25_weight
         self.vector_weight = vector_weight
         self.rrf_k = rrf_k
+        self.max_retrieval_attempts = max_retrieval_attempts
 
         # BM25 indexes per document (built on first query per doc)
         self._bm25_indexes: dict[str, BM25Retriever] = {}
@@ -231,6 +238,202 @@ class RetrievalService:
                 "chunks_retrieved": len(combined),
             },
         )
+
+        return RetrievalResult(
+            context=context,
+            sources=sources,
+            chunks_retrieved=len(combined),
+            has_context=True,
+        )
+
+    # ─── Self-Correcting Retrieval (Agentic RAG) ───────────────────────
+
+    async def retrieve_with_correction(
+        self, query: str, document_id: str | None = None
+    ) -> RetrievalResult:
+        """
+        Self-correcting retrieval: retrieve → grade → reformulate if needed → retry.
+
+        This is the AGENTIC part of our RAG:
+        1. Retrieve chunks normally (hybrid search)
+        2. Ask an LLM: "Do these chunks contain enough info to answer the question?"
+        3. If YES → return the chunks (proceed to generation)
+        4. If NO → ask LLM to reformulate the query, then retrieve again
+        5. Max attempts = max_retrieval_attempts (default 2)
+
+        Falls back to regular retrieval if grading/reformulation fails.
+        """
+        from agent.graph import _create_llm, _extract_text
+
+        current_query = query
+        attempt = 0
+
+        while attempt < self.max_retrieval_attempts:
+            attempt += 1
+
+            # Step 1: Retrieve with current query
+            result = await self._do_retrieval(current_query, document_id)
+
+            if not result.has_context:
+                # Nothing found at all — try reformulating
+                if attempt < self.max_retrieval_attempts:
+                    reformulated = await self._reformulate_query(query, current_query)
+                    if reformulated and reformulated != current_query:
+                        logger.info(
+                            "Self-correcting: no context found, reformulating",
+                            extra={
+                                "attempt": attempt,
+                                "original": current_query[:50],
+                                "reformulated": reformulated[:50],
+                            },
+                        )
+                        current_query = reformulated
+                        continue
+                return result
+
+            # Step 2: Grade the retrieval quality
+            is_relevant = await self._grade_retrieval(query, result.context)
+
+            if is_relevant:
+                # Chunks are good enough — proceed
+                logger.info(
+                    "Self-correcting: retrieval graded as RELEVANT",
+                    extra={"attempt": attempt, "query": query[:50]},
+                )
+                return result
+
+            # Step 3: Not relevant enough — reformulate and retry
+            if attempt < self.max_retrieval_attempts:
+                reformulated = await self._reformulate_query(query, current_query)
+                if reformulated and reformulated != current_query:
+                    logger.info(
+                        "Self-correcting: retrieval graded as POOR, reformulating",
+                        extra={
+                            "attempt": attempt,
+                            "original": current_query[:50],
+                            "reformulated": reformulated[:50],
+                        },
+                    )
+                    current_query = reformulated
+                else:
+                    # Can't reformulate differently — return what we have
+                    return result
+            else:
+                # Max attempts reached — return best effort
+                return result
+
+        return result
+
+    async def _grade_retrieval(self, query: str, context: str) -> bool:
+        """
+        Ask an LLM: "Does this context contain enough info to answer the question?"
+        Returns True if relevant, False if not.
+        """
+        from agent.graph import _create_llm, _extract_text
+
+        try:
+            llm = _create_llm(settings.primary_model)
+
+            grading_prompt = (
+                f"You are a retrieval quality grader. Your job is to determine if the "
+                f"retrieved context contains enough information to answer the user's question.\n\n"
+                f"Question: {query}\n\n"
+                f"Retrieved Context:\n{context[:2000]}\n\n"
+                f"Does this context contain sufficient information to answer the question? "
+                f"Respond with ONLY 'YES' or 'NO'."
+            )
+
+            result = llm.invoke([HumanMessage(content=grading_prompt)])
+            answer = _extract_text(result.content).strip().upper()
+
+            return "YES" in answer
+
+        except Exception as e:
+            logger.warning(
+                "Retrieval grading failed, assuming relevant",
+                extra={"error": str(e)},
+            )
+            # On failure, don't block — assume relevant and proceed
+            return True
+
+    async def _reformulate_query(self, original_query: str, last_query: str) -> str:
+        """
+        Ask an LLM to reformulate the query for better retrieval.
+        Strategies: rephrase, expand with synonyms, decompose into sub-questions.
+        """
+        from agent.graph import _create_llm, _extract_text
+
+        try:
+            llm = _create_llm(settings.primary_model)
+
+            reformulation_prompt = (
+                f"The following search query did not retrieve relevant results from a document database. "
+                f"Please reformulate it to improve retrieval. Try these strategies:\n"
+                f"- Use different keywords or synonyms\n"
+                f"- Make it more specific or more general\n"
+                f"- Break it into a clearer, more searchable phrase\n\n"
+                f"Original question: {original_query}\n"
+                f"Last search query tried: {last_query}\n\n"
+                f"Provide ONLY the reformulated search query, nothing else:"
+            )
+
+            result = llm.invoke([HumanMessage(content=reformulation_prompt)])
+            reformulated = _extract_text(result.content).strip()
+
+            # Clean up — remove quotes if the LLM wrapped it
+            reformulated = reformulated.strip('"\'')
+
+            return reformulated if reformulated else last_query
+
+        except Exception as e:
+            logger.warning(
+                "Query reformulation failed",
+                extra={"error": str(e)},
+            )
+            return last_query
+
+    async def _do_retrieval(self, query: str, document_id: str | None) -> RetrievalResult:
+        """Execute a single retrieval pass (hybrid search + optional compression)."""
+        # Vector search (semantic)
+        vector_results = self.vector_store.similarity_search(
+            query=query,
+            k=self.k,
+            document_id=document_id,
+        )
+
+        # BM25 search (keyword)
+        bm25_results = []
+        if document_id and document_id in self._bm25_indexes:
+            try:
+                bm25_results = self._bm25_indexes[document_id].invoke(query)
+            except Exception:
+                pass
+
+        # Combine with RRF
+        if bm25_results and vector_results:
+            combined = self._reciprocal_rank_fusion(
+                retrievers_results=[vector_results, bm25_results],
+                weights=[self.vector_weight, self.bm25_weight],
+            )
+        elif vector_results:
+            combined = vector_results[:self.k]
+        else:
+            combined = []
+
+        if not combined:
+            return RetrievalResult(
+                context="",
+                sources=[],
+                chunks_retrieved=0,
+                has_context=False,
+            )
+
+        # Contextual compression
+        if self.compression:
+            combined = await self.compression.compress(combined, query)
+
+        context = self._format_context(combined)
+        sources = self._extract_sources(combined)
 
         return RetrievalResult(
             context=context,
