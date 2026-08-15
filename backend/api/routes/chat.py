@@ -26,6 +26,7 @@ from slowapi.util import get_remote_address
 
 from models.schemas import ChatRequest, ChatResponse, StandardErrorResponse, SecurityVerdict
 from config import settings
+from agent.graph import DEFAULT_SYSTEM_PROMPT, ANALYTICAL_SYSTEM_PROMPT
 
 router = APIRouter()
 logger = logging.getLogger("docmind")
@@ -161,7 +162,10 @@ async def chat(request: Request, body: ChatRequest):
             f"Current question: {cleaned_query}"
         )
 
-    agent_result = await agent.invoke(query=query_with_history, context=context)
+    # Select system prompt based on chat mode
+    system_prompt = ANALYTICAL_SYSTEM_PROMPT if body.mode == "analytical" else DEFAULT_SYSTEM_PROMPT
+
+    agent_result = await agent.invoke(query=query_with_history, context=context, system_prompt=system_prompt)
 
     response_text = agent_result["response"] or "No response generated."
     model_used = agent_result["model_used"] or "unknown"

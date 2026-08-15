@@ -28,11 +28,12 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from models.schemas import ChatRequest, SecurityVerdict
 from config import settings
-from agent.graph import DEFAULT_SYSTEM_PROMPT, _extract_text
+from agent.graph import DEFAULT_SYSTEM_PROMPT, ANALYTICAL_SYSTEM_PROMPT, _extract_text, _create_llm
 
 router = APIRouter()
 logger = logging.getLogger("docmind")
@@ -96,7 +97,7 @@ async def chat_stream(request: Request, body: ChatRequest):
     retrieval = getattr(request.app.state, "retrieval", None)
 
     if body.document_id and retrieval:
-        retrieval_result = retrieval.retrieve(
+        retrieval_result = await retrieval.retrieve(
             query=cleaned_query,
             document_id=body.document_id,
         )
@@ -105,7 +106,7 @@ async def chat_stream(request: Request, body: ChatRequest):
             sources = retrieval_result.sources
 
     # ─── Build Messages ─────────────────────────────────────────────────
-    system_prompt = DEFAULT_SYSTEM_PROMPT
+    system_prompt = ANALYTICAL_SYSTEM_PROMPT if body.mode == "analytical" else DEFAULT_SYSTEM_PROMPT
 
     query_with_history = cleaned_query
     if history:
@@ -134,12 +135,7 @@ async def chat_stream(request: Request, body: ChatRequest):
         full_response = ""
 
         try:
-            llm = ChatGoogleGenerativeAI(
-                model=settings.primary_model,
-                google_api_key=settings.google_api_key,
-                temperature=settings.temperature,
-                streaming=True,
-            )
+            llm = _create_llm(settings.primary_model)
 
             async for chunk in llm.astream(messages):
                 token = _extract_text(chunk.content)

@@ -28,16 +28,19 @@ class Settings(BaseSettings):
 
     # ─── LLM Models ────────────────────────────────────────────────────
     # Primary model: fast + cheap (handles most requests)
-    primary_model: str = "gemini-flash-latest"
+    primary_model: str = "llama-3.3-70b-versatile"
     # Fallback model: more capable (used when primary fails)
-    fallback_model: str = "gemini-flash-latest"
+    fallback_model: str = "llama-3.1-8b-instant"
+    # Provider: "groq" or "google"
+    llm_provider: str = "groq"
     # Temperature for generation (0 = deterministic, 1 = creative)
     temperature: float = 0.1
     # Max retries before switching to fallback
     max_retries: int = 2
 
     # ─── API Keys ──────────────────────────────────────────────────────
-    google_api_key: str  # Required — app won't start without this
+    google_api_key: str  # Required — used for embeddings
+    groq_api_key: str = ""  # Required if llm_provider is "groq"
 
     # ─── Embeddings ────────────────────────────────────────────────────
     embedding_model: str = "models/gemini-embedding-001"

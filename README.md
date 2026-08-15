@@ -4,6 +4,8 @@ Production-grade RAG (Retrieval-Augmented Generation) system for document intell
 
 Built with a production-first architecture: security pipeline, hybrid retrieval, contextual compression, LangGraph agent with failover, automated evaluation, and Docker deployment.
 
+![DocMind Demo](docs/screenshots/demo.png)
+
 ## Architecture
 
 ```

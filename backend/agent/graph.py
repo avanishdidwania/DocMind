@@ -19,12 +19,36 @@ import time
 from typing import TypedDict, Optional, Annotated
 
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
 from config import settings
 
 logger = logging.getLogger("docmind")
+
+
+# ─── LLM Factory ───────────────────────────────────────────────────────────
+
+
+def _create_llm(model: str):
+    """
+    Create an LLM instance based on the configured provider.
+    Groq for generation (fast, generous limits).
+    Google for embeddings (handled separately in vector_store.py).
+    """
+    if settings.llm_provider == "groq":
+        return ChatGroq(
+            model=model,
+            api_key=settings.groq_api_key,
+            temperature=settings.temperature,
+        )
+    else:
+        return ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=settings.google_api_key,
+            temperature=settings.temperature,
+        )
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -121,11 +145,7 @@ def call_primary_model(state: AgentState) -> dict:
     start = time.time()
 
     try:
-        llm = ChatGoogleGenerativeAI(
-            model=settings.primary_model,
-            google_api_key=settings.google_api_key,
-            temperature=settings.temperature,
-        )
+        llm = _create_llm(settings.primary_model)
 
         messages = _build_messages(state)
 
@@ -175,11 +195,7 @@ def call_fallback_model(state: AgentState) -> dict:
     start = time.time()
 
     try:
-        llm = ChatGoogleGenerativeAI(
-            model=settings.fallback_model,
-            google_api_key=settings.google_api_key,
-            temperature=settings.temperature,
-        )
+        llm = _create_llm(settings.fallback_model)
 
         messages = _build_messages(state)
 
@@ -331,6 +347,23 @@ Guidelines:
 - Be concise but thorough
 - If you don't know something, say so clearly
 - Always cite which part of the document you're referencing"""
+
+
+ANALYTICAL_SYSTEM_PROMPT = """You are DocMind in Analytical Data mode — a precision data analyst.
+
+Your focus:
+- Extract and analyze numerical data, statistics, and metrics
+- Identify trends, patterns, and comparisons
+- Perform calculations when relevant
+- Present findings with specific numbers and percentages
+
+Guidelines:
+- Prioritize structured data, tables, and figures from the context
+- Always include specific numbers (not vague statements like "many" or "a lot")
+- Compare values, calculate differences, identify outliers
+- Format responses with bullet points and clear data breakdowns
+- Cite exact sources for every data point
+- If asked for analysis, provide both the raw data AND your interpretation"""
 
 
 class ProductionAgent:

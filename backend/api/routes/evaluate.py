@@ -40,19 +40,27 @@ async def evaluate_document(request: Request, document_id: str, n_questions: int
         raise HTTPException(status_code=404, detail="Document not found")
 
     # Get the document text (we need it for Q&A generation)
-    # Re-extract from stored chunks via vector store
-    vector_store = request.app.state.vector_store
-    chunks = vector_store.similarity_search(
-        query="",  # Empty query gets all chunks (filtered by doc_id)
-        k=50,  # Get up to 50 chunks
-        document_id=document_id,
-    )
+    # Use the document service's stored chunks for text reconstruction
+    doc_service = request.app.state.doc_service
+    retrieval = request.app.state.retrieval
 
-    if not chunks:
+    # Get chunks from the BM25 index (already stored during upload)
+    doc_chunks = retrieval._doc_chunks.get(document_id, [])
+
+    if not doc_chunks:
+        # Fallback: try vector store search with a generic query
+        vector_store = request.app.state.vector_store
+        doc_chunks = vector_store.similarity_search(
+            query="document overview summary main content",
+            k=50,
+            document_id=document_id,
+        )
+
+    if not doc_chunks:
         raise HTTPException(status_code=422, detail="No chunks found for document")
 
     # Reconstruct document text from chunks
-    document_text = "\n\n".join(chunk.page_content for chunk in chunks)
+    document_text = "\n\n".join(chunk.page_content for chunk in doc_chunks)
 
     # Run evaluation
     summary = await eval_service.evaluate_document(

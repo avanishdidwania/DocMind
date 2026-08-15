@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
     # RAG components
     vector_store = VectorStore()
     app.state.vector_store = vector_store
-    compression = CompressionService(enabled=True)
+    compression = CompressionService(enabled=False)  # Disabled for now (adds ~20s latency with 4 sync LLM calls)
     retrieval = RetrievalService(vector_store=vector_store, compression_service=compression)
     app.state.retrieval = retrieval
     app.state.doc_service = DocumentService(vector_store=vector_store, retrieval_service=retrieval)

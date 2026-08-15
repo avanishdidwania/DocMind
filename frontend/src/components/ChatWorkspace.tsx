@@ -4,7 +4,6 @@ import {
   Bot, 
   User, 
   HelpCircle, 
-  Paperclip,
   Clock,
   Cpu,
   FileSearch,
@@ -307,9 +306,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                 disabled={isGenerating}
               />
               <div className="flex items-center gap-2 pr-2 pb-1.5 flex-shrink-0">
-                <button className="p-2.5 rounded-full text-on-surface-variant hover:text-primary hover:bg-white/5 transition-colors cursor-pointer" title="Attach file">
-                  <Paperclip className="w-4 h-4" />
-                </button>
                 <button 
                   onClick={handleSend}
                   disabled={!inputValue.trim() || isGenerating}

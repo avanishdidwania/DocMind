@@ -23,12 +23,11 @@ import logging
 import time
 from dataclasses import dataclass
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
 from config import settings
 from services.retrieval_service import RetrievalService
-from agent.graph import ProductionAgent, _extract_text
+from agent.graph import ProductionAgent, _extract_text, _create_llm
 
 logger = logging.getLogger("docmind")
 
@@ -132,11 +131,7 @@ class EvaluationService:
     def __init__(self, retrieval_service: RetrievalService, agent: ProductionAgent):
         self.retrieval = retrieval_service
         self.agent = agent
-        self.llm = ChatGoogleGenerativeAI(
-            model=settings.primary_model,
-            google_api_key=settings.google_api_key,
-            temperature=0.0,
-        )
+        self.llm = _create_llm(settings.primary_model)
         logger.info("EvaluationService initialized")
 
     async def evaluate_document(
