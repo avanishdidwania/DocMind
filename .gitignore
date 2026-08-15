@@ -26,5 +26,8 @@ pgdata/
 # Test files
 test_*.py
 
+# Learning notes (private study material)
+docs/notes/
+
 # Chroma local data
 chroma_data/
