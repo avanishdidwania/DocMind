@@ -24,9 +24,19 @@ Client Request
 │   Cache Layer    │  SHA256 + TTL (Redis in prod)
 └────────┬────────┘
          ▼
-┌─────────────────┐
-│ Hybrid Retrieval │  BM25 (keyword) + Vector (semantic) + RRF
-└────────┬────────┘
+┌─────────────────────────────────────────────┐
+│         Self-Correcting Retrieval            │
+│                                             │
+│  Hybrid Search (BM25 + Vector + RRF)        │
+│         │                                   │
+│         ▼                                   │
+│  Grade: "Do these chunks answer the         │
+│          question?" (LLM judge)             │
+│         │                                   │
+│    YES ←┘─── NO → Reformulate query         │
+│    │              → Retry (max 2)           │
+│    ▼                                        │
+└────────┬────────────────────────────────────┘
          ▼
 ┌─────────────────┐
 │  Compression     │  LLM extracts only query-relevant sentences
@@ -46,6 +56,7 @@ Client Request
 ## Features
 
 **Retrieval & RAG**
+- **Self-Correcting Retrieval (Agentic RAG)** — After retrieval, an LLM grades the chunks: "Does this context answer the question?" If NO, it reformulates the query (rephrases, expands keywords, uses synonyms) and retrieves again. Max 2 attempts. This catches vocabulary mismatch and retrieval failures that regular RAG passes through silently.
 - **Hybrid Retrieval** — BM25 keyword search + vector semantic search, combined with Reciprocal Rank Fusion (RRF). Handles both exact-term queries ("error E_TIMEOUT") and conceptual questions.
 - **Contextual Compression** — After retrieval, an LLM extracts only the query-relevant sentences from each chunk. Reduces noise, lowers token usage, improves answer quality.
 - **Multi-Document Chat** — Query across multiple uploaded documents simultaneously. "Compare what document A says about X vs document B."
@@ -53,6 +64,7 @@ Client Request
 
 **Agent & Generation**
 - **LangGraph Agent** — Stateful agent with built-in safety net. Primary model → retry → fallback model → graceful error. Users never see a stack trace.
+- **Multi-Provider LLM** — Groq for generation (10x faster), Google for embeddings. Factory pattern (`_create_llm()`) allows switching providers with one config change.
 - **Streaming Responses (SSE)** — Tokens appear as they're generated via Server-Sent Events. No more waiting 3-5 seconds for full responses.
 - **Conversation Memory** — Stateful chat sessions with configurable history window. Follow-up questions work naturally.
 
@@ -160,11 +172,17 @@ backend/
 
 ## Design Decisions
 
+**Why self-correcting retrieval?**
+Regular RAG retrieves once and generates from whatever it gets — if retrieval is bad, the answer is bad (or hallucinated). Self-correcting RAG adds a feedback loop at runtime: an LLM grades the retrieved chunks ("does this answer the question?"), and if not, reformulates the query with different keywords and retries. This catches vocabulary mismatch that hybrid search alone can't solve.
+
 **Why LangGraph over raw chains?**
 Error handling is architectural, not bolted-on. The safety net (retry → fallback → graceful error) is part of the graph. Adding new capabilities (retrieval, tools) is just adding nodes — existing nodes untouched.
 
 **Why hybrid retrieval with RRF?**
 Vector search fails on exact terms ("error code E_TIMEOUT"). BM25 fails on semantic queries ("how does authentication work?"). RRF combines both rank-based (no score normalization needed). Documents appearing in BOTH lists get boosted.
+
+**Why multi-provider LLM?**
+No single provider is best at everything. Groq gives 10x faster generation with generous free tier. Google provides the best embeddings. A factory pattern (`_create_llm()`) lets us switch with one config change — no code modifications needed.
 
 **Why contextual compression?**
 Retrieved chunks are 1000 chars. Maybe 2 sentences are relevant. Compression extracts only those sentences → fewer tokens, less noise, better answers. One extra fast LLM call per chunk is worth the quality gain.
