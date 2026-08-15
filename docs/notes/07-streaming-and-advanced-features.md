@@ -206,3 +206,132 @@ A: Two automated metrics: retrieval relevance (1-5, did we find the right chunks
 
 **Q: What's the difference between faithfulness and relevance?**
 A: Relevance measures the RETRIEVAL stage — did we find the right information? Faithfulness measures the GENERATION stage — given the context, did the LLM stay grounded or hallucinate? You can have high relevance (found great chunks) but low faithfulness (LLM ignored them and made stuff up), or vice versa. You need both to be high.
+
+
+---
+
+## Self-Correcting RAG (Agentic Retrieval)
+
+### What It Is
+
+The retrieval system grades its own quality and retries with a reformulated query if the initial chunks aren't relevant enough. Instead of blindly passing whatever chunks the vector store returns, an LLM decides: "Is this actually useful for answering the question?"
+
+This is the "agentic" part of Agentic RAG — the system has agency to fix its own mistakes.
+
+### The Problem It Solves
+
+Normal RAG fails silently. If you ask "What's the uptime target?" but the chunks returned are about caching and latency (because "uptime" isn't a literal keyword in the document), regular RAG generates a bad answer from irrelevant context — or worse, hallucinates.
+
+Self-correcting RAG catches this: "These chunks don't answer the question. Let me rephrase and try again."
+
+### The Flow
+
+```
+User Query: "What's the uptime target?"
+    │
+    ▼
+[Hybrid Retrieval] → finds chunks about caching/latency (not uptime)
+    │
+    ▼
+[Grade] → LLM: "Do these chunks answer 'uptime target'?" → NO
+    │
+    ▼
+[Reformulate] → LLM: "Rephrase for better retrieval" → "system reliability availability SLA percentage"
+    │
+    ▼
+[Hybrid Retrieval] → finds "99.9% via LangGraph safety net"
+    │
+    ▼
+[Grade] → YES → proceed to generation
+    │
+    ▼
+[Agent] → "The uptime target is 99.9%"
+```
+
+### Implementation
+
+Three new methods in `RetrievalService`:
+
+```python
+async def retrieve_with_correction(self, query, document_id):
+    """Main entry point. Loops: retrieve → grade → reformulate → retry (max 2)."""
+
+async def _grade_retrieval(self, query, context) -> bool:
+    """LLM-as-judge: 'Does this context answer the question? YES/NO'"""
+
+async def _reformulate_query(self, original_query, last_query) -> str:
+    """LLM rephrases query: different keywords, synonyms, more specific/general"""
+```
+
+Key design decisions:
+- **Max 2 attempts** — prevents infinite loops and runaway API costs
+- **Graceful fallback** — if grading or reformulation fails, return whatever we have (don't crash)
+- **Grade prompt is simple** — "YES or NO" gives consistent, parseable responses
+- **Reformulation prompt gives strategies** — "try synonyms, be more specific, break into phrases"
+
+### Cost Analysis
+
+| Scenario | LLM Calls | Latency Added |
+|----------|-----------|---------------|
+| Good retrieval (pass first grade) | +1 (grading) | +0.5-1s |
+| Poor retrieval (reformulate once) | +3 (grade + reformulate + grade) | +1.5-3s |
+| Very poor (max attempts) | +4 | +2-4s |
+
+Most queries (~80%) pass on first attempt. The extra 0.5-1s for grading is worth it for the 20% of queries that would have failed silently.
+
+### Interview Answer
+
+"Our retrieval is self-correcting. After hybrid search returns chunks, an LLM grades them: 'Does this context answer the question?' If NO, it reformulates the query using different keywords or phrasing and retrieves again — up to 2 attempts. This catches cases where the initial retrieval misses due to vocabulary mismatch. Most queries pass on first attempt (~0.5s overhead), but for the 20% that would have failed, this is the difference between a correct answer and a hallucination."
+
+### Key Interview Questions
+
+**Q: What's the difference between self-correcting and regular RAG?**
+A: Regular RAG retrieves once and generates from whatever it gets — if retrieval is bad, the answer is bad. Self-correcting RAG adds a feedback loop: grade retrieval quality, reformulate if poor, retry. It catches vocabulary mismatch and retrieval failures that regular RAG passes through silently.
+
+**Q: Why not just retrieve more chunks (higher K)?**
+A: Higher K adds noise. You get more chunks but they're less relevant on average. Self-correcting is targeted — it only retries when the specific query didn't work, and it reformulates to find what's actually needed. It's precision, not recall.
+
+**Q: How do you prevent infinite loops?**
+A: Hard cap at 2 attempts. Also, if reformulation returns the same query (can't think of anything different), we return what we have. Graceful degradation over infinite retrying.
+
+**Q: What's the latency impact?**
+A: +0.5-1s for grading on every query (one fast LLM call). Only queries that fail grading pay the reformulation cost (+1-2s more). In practice, ~80% of queries pass on first attempt because hybrid retrieval is already good.
+
+---
+
+## Multi-Provider LLM Architecture
+
+### What It Is
+
+Using different LLM providers for different tasks based on cost/speed/quality tradeoffs:
+- **Groq (Llama 3.3 70B)** — for text generation (fast, generous free tier, 30 req/min)
+- **Google (gemini-embedding-001)** — for embeddings only (no Groq embedding model exists)
+
+### Why This Pattern
+
+No single provider is best at everything:
+- Google Gemini: good quality, but 20 req/day free tier (hit rate limits fast)
+- Groq: incredibly fast (500ms vs 3-5s), generous limits, but no embedding models
+- OpenAI: high quality, expensive, slow
+
+Production systems mix providers based on task requirements.
+
+### Implementation
+
+```python
+def _create_llm(model: str):
+    """Factory that creates the right LLM based on configured provider."""
+    if settings.llm_provider == "groq":
+        return ChatGroq(model=model, api_key=settings.groq_api_key, ...)
+    else:
+        return ChatGoogleGenerativeAI(model=model, ...)
+```
+
+Every component that needs an LLM calls `_create_llm()` — agent, evaluation, self-correction, compression. Swap provider in one place (config), everything switches.
+
+### Interview Answer
+
+"We use a multi-provider architecture: Groq for text generation (10x faster, generous rate limits) and Google for embeddings (Groq doesn't offer embedding models). A factory function `_create_llm()` abstracts the provider — we can switch by changing one config variable. This is a common production pattern: optimize each task for the best cost/speed/quality tradeoff instead of being locked to one provider."
+
+**Q: What happens if Groq goes down?**
+A: Our LangGraph safety net handles this. Primary model (Groq Llama 70B) fails → retry → fallback model (Groq Llama 8B, faster/simpler) → graceful error. We could also configure the fallback to a completely different provider (e.g., Google) for provider-level redundancy.

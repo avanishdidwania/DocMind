@@ -736,3 +736,38 @@ A: Relevance = retrieval stage (right chunks?). Faithfulness = generation stage 
 
 **Q: When to use compression?**
 A: When chunks are large, context window is limited, or precision matters more than latency. Skip for simple/fast queries where speed is priority.
+
+
+---
+
+## Self-Correcting RAG (Agentic Retrieval)
+
+**What:** Retrieval grades its own quality. If chunks aren't relevant, reformulates the query and retries.
+
+**Flow:**
+```
+Retrieve → Grade ("do these chunks answer the question?") → YES → generate answer
+                                                          → NO → reformulate query → retrieve again (max 2)
+```
+
+**Implementation:** Three methods — `retrieve_with_correction()`, `_grade_retrieval()` (YES/NO judge), `_reformulate_query()` (rephrase with synonyms/expansion).
+
+**Cost:** +0.5-1s per query (grading). Only poor retrievals (~20%) pay the reformulation cost (+1-2s more).
+
+**Interview:** "After hybrid search, an LLM grades the chunks: 'Does this answer the question?' If NO, it reformulates using different keywords and retries — max 2 attempts. Catches vocabulary mismatch that regular RAG passes through silently. 80% of queries pass first time. The 20% that would have failed get self-corrected."
+
+**Q: Why not just retrieve more chunks?**
+A: Higher K adds noise. Self-correction is targeted — reformulates for what's actually needed. Precision over recall.
+
+---
+
+## Multi-Provider LLM Architecture
+
+**What:** Different providers for different tasks. Groq for generation (fast, 30 req/min). Google for embeddings (no Groq alternative).
+
+**Implementation:** `_create_llm()` factory. Swap provider in config, all components switch.
+
+**Interview:** "We use Groq for generation (10x faster than Google, generous limits) and Google for embeddings only. A factory function abstracts the provider — one config change to switch. Production systems mix providers to optimize cost/speed/quality per task."
+
+**Q: What if Groq goes down?**
+A: LangGraph safety net: primary (Llama 70B) → retry → fallback (Llama 8B) → graceful error. Could add Google as cross-provider fallback.
