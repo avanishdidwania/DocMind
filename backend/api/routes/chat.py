@@ -26,7 +26,6 @@ from slowapi.util import get_remote_address
 
 from models.schemas import ChatRequest, ChatResponse, StandardErrorResponse, SecurityVerdict
 from config import settings
-from agent.graph import DEFAULT_SYSTEM_PROMPT, ANALYTICAL_SYSTEM_PROMPT
 
 router = APIRouter()
 logger = logging.getLogger("docmind")
@@ -127,68 +126,47 @@ async def chat(request: Request, body: ChatRequest):
                 latency_ms=latency_ms,
             )
 
-    # ─── Step 4: Retrieve Context (RAG) ────────────────────────────────
-    context = ""
-    sources = []
-    retrieval = getattr(request.app.state, "retrieval", None)
+    # ─── Step 4: Skill Router ──────────────────────────────────────────
+    # The router classifies intent and dispatches to the right skill:
+    # - "document_qa" → RAG over uploaded docs (hybrid + self-correcting)
+    # - "fact_check" → calls nolie-agent for claim verification
+    # - "general" → direct LLM response
+    # - "combined" → both document QA + fact-check
 
-    if retrieval:
-        if body.document_ids and len(body.document_ids) > 1:
-            # Multi-document retrieval
-            retrieval_result = await retrieval.retrieve_multi(
-                query=cleaned_query,
-                document_ids=body.document_ids,
-            )
-            if retrieval_result.has_context:
-                context = retrieval_result.context
-                sources = retrieval_result.sources
-        elif body.document_id or (body.document_ids and len(body.document_ids) == 1):
-            # Single document — self-correcting retrieval
-            doc_id = body.document_id or body.document_ids[0]
-            retrieval_result = await retrieval.retrieve_with_correction(
-                query=cleaned_query,
-                document_id=doc_id,
-            )
-            if retrieval_result.has_context:
-                context = retrieval_result.context
-                sources = retrieval_result.sources
+    skill_router = request.app.state.skill_router
 
-    # ─── Step 5: LangGraph Agent ───────────────────────────────────────
-    # Build the full query with conversation history
-    query_with_history = cleaned_query
-    if history:
-        query_with_history = (
-            f"Conversation so far:\n{history}\n\n"
-            f"Current question: {cleaned_query}"
-        )
+    skill_context = {
+        "document_id": body.document_id,
+        "document_ids": body.document_ids,
+        "session_id": session_id,
+        "history": history,
+        "mode": body.mode,
+    }
 
-    # Select system prompt based on chat mode
-    system_prompt = ANALYTICAL_SYSTEM_PROMPT if body.mode == "analytical" else DEFAULT_SYSTEM_PROMPT
+    skill_result = await skill_router.route(query=cleaned_query, context=skill_context)
 
-    agent_result = await agent.invoke(query=query_with_history, context=context, system_prompt=system_prompt)
+    response_text = skill_result.response or "No response generated."
+    sources = skill_result.sources
+    model_used = skill_result.metadata.get("model_used", skill_result.skill_used)
+    tokens_used = skill_result.metadata.get("tokens_used", 0)
 
-    response_text = agent_result["response"] or "No response generated."
-    model_used = agent_result["model_used"] or "unknown"
-    tokens_used = agent_result.get("tokens_used", 0)
-
-    # ─── Step 6: Save to Memory + Cache ────────────────────────────────
+    # ─── Step 5: Save to Memory + Cache ────────────────────────────────
     # Save assistant response to conversation memory
     memory.add_message(session_id, role="assistant", content=response_text)
 
     # Cache the response (only if no conversation history — stateless queries)
-    if not history and model_used != "error_fallback":
+    if not history and skill_result.skill_used != "fact_checker":
         cache.set(cleaned_query, response_text, model_used)
 
-    # ─── Step 7: Record Metrics ────────────────────────────────────────
+    # ─── Step 6: Record Metrics ────────────────────────────────────────
     latency_ms = (time.time() - start_time) * 1000
-    is_error = model_used == "error_fallback"
 
     metrics.record_request(
         latency_ms=latency_ms,
         model_used=model_used,
         tokens_used=tokens_used,
         cached=False,
-        error=is_error,
+        error=False,
     )
 
     logger.info(
@@ -204,7 +182,7 @@ async def chat(request: Request, body: ChatRequest):
         },
     )
 
-    # ─── Step 8: Return Response ───────────────────────────────────────
+    # ─── Step 7: Return Response ───────────────────────────────────────
     return ChatResponse(
         response=response_text,
         session_id=session_id,
@@ -214,12 +192,14 @@ async def chat(request: Request, body: ChatRequest):
         sources=sources,
         metadata={
             "request_id": request_id,
+            "skill_used": skill_result.skill_used,
             "tokens_used": tokens_used,
             "security_verdict": security_result.verdict.value,
             "pii_masked": security_result.pii_detected,
             "document_id": body.document_id,
             "chunks_retrieved": len(sources),
             "conversation_turns": session.message_count,
+            **skill_result.metadata,
         },
     )
 

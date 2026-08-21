@@ -31,6 +31,10 @@ from services.retrieval_service import RetrievalService
 from services.memory_service import MemoryService
 from services.compression_service import CompressionService
 from services.evaluation_service import EvaluationService
+from skills.router import SkillRouter
+from skills.fact_checker import FactCheckerSkill
+from skills.document_qa import DocumentQASkill
+from skills.general_chat import GeneralChatSkill
 from api.routes.chat import router as chat_router
 from api.routes.health import router as health_router
 from api.routes.documents import router as documents_router
@@ -79,6 +83,16 @@ async def lifespan(app: FastAPI):
     app.state.eval_service = EvaluationService(
         retrieval_service=retrieval,
         agent=app.state.agent,
+    )
+
+    # Skills framework
+    fact_checker = FactCheckerSkill()
+    document_qa = DocumentQASkill(retrieval_service=retrieval, agent=app.state.agent)
+    general_chat = GeneralChatSkill(agent=app.state.agent)
+    app.state.skill_router = SkillRouter(
+        fact_checker=fact_checker,
+        document_qa=document_qa,
+        general_chat=general_chat,
     )
 
     logger.info(
