@@ -127,11 +127,8 @@ async def chat(request: Request, body: ChatRequest):
             )
 
     # ─── Step 4: Skill Router ──────────────────────────────────────────
-    # The router classifies intent and dispatches to the right skill:
-    # - "document_qa" → RAG over uploaded docs (hybrid + self-correcting)
-    # - "fact_check" → calls nolie-agent for claim verification
-    # - "general" → direct LLM response
-    # - "combined" → both document QA + fact-check
+    # "auto" mode: router classifies intent (costs 1 LLM call)
+    # Explicit mode: skip router, dispatch directly (saves API call)
 
     skill_router = request.app.state.skill_router
 
@@ -140,10 +137,16 @@ async def chat(request: Request, body: ChatRequest):
         "document_ids": body.document_ids,
         "session_id": session_id,
         "history": history,
-        "mode": body.mode,
+        "mode": body.mode.value,
     }
 
-    skill_result = await skill_router.route(query=cleaned_query, context=skill_context)
+    if body.mode == "auto":
+        # Let the router classify intent (uses 1 LLM call)
+        skill_result = await skill_router.route(query=cleaned_query, context=skill_context)
+    else:
+        # User explicitly chose a skill — skip the router, save an API call
+        skill = skill_router.skills.get(body.mode.value, skill_router.skills["general"])
+        skill_result = await skill.execute(query=cleaned_query, context=skill_context)
 
     response_text = skill_result.response or "No response generated."
     sources = skill_result.sources

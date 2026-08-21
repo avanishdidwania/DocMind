@@ -38,10 +38,17 @@ def _create_llm(model: str):
     Google for embeddings (handled separately in vector_store.py).
     """
     if settings.llm_provider == "groq":
+        import httpx
+        # Note: verify=False is needed on networks with SSL interception
+        # (corporate proxies, antivirus). In production, use proper certs.
+        http_client = httpx.Client(verify=False)
+        http_async_client = httpx.AsyncClient(verify=False)
         return ChatGroq(
             model=model,
             api_key=settings.groq_api_key,
             temperature=settings.temperature,
+            http_client=http_client,
+            http_async_client=http_async_client,
         )
     else:
         return ChatGoogleGenerativeAI(
@@ -346,7 +353,8 @@ Guidelines:
 - Base answers on provided context when available
 - Be concise but thorough
 - If you don't know something, say so clearly
-- Always cite which part of the document you're referencing"""
+- Always cite which part of the document you're referencing
+- Use plain text formatting only. Never use LaTeX, MathJax, or mathematical notation like \\sqrt or \\frac. Write math in simple readable form (e.g., "sqrt(25) = 5" or "5^2 = 25")."""
 
 
 ANALYTICAL_SYSTEM_PROMPT = """You are DocMind in Analytical Data mode — a precision data analyst.

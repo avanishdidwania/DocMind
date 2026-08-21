@@ -28,9 +28,9 @@ class Settings(BaseSettings):
 
     # ─── LLM Models ────────────────────────────────────────────────────
     # Primary model: fast + cheap (handles most requests)
-    primary_model: str = "llama-3.3-70b-versatile"
+    primary_model: str = "openai/gpt-oss-120b"
     # Fallback model: more capable (used when primary fails)
-    fallback_model: str = "llama-3.1-8b-instant"
+    fallback_model: str = "openai/gpt-oss-20b"
     # Provider: "groq" or "google"
     llm_provider: str = "groq"
     # Temperature for generation (0 = deterministic, 1 = creative)

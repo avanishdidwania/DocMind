@@ -7,7 +7,9 @@ import {
   Clock,
   Cpu,
   FileSearch,
-  BookOpen
+  BookOpen,
+  Copy,
+  Check
 } from "lucide-react";
 
 export interface Message {
@@ -24,7 +26,7 @@ export interface Message {
 
 interface ChatWorkspaceProps {
   messages: Message[];
-  onSendMessage: (text: string, mode: "general" | "analytical") => void;
+  onSendMessage: (text: string, mode: "auto" | "general" | "fact_check" | "document_qa") => void;
   selectedDocIds: string[];
   activeDocumentName?: string;
   inputPlaceholder: string;
@@ -40,13 +42,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   isGenerating
 }) => {
   const [inputValue, setInputValue] = useState("");
-  const [chatMode, setChatMode] = useState<"general" | "analytical">("general");
+  const [chatMode, setChatMode] = useState<"auto" | "general" | "fact_check" | "document_qa">("auto");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom of chat
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isGenerating]);
+
+  // Copy to clipboard helper
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const handleCopy = (text: string, msgId: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(msgId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   const handleSend = () => {
     if (!inputValue.trim() || isGenerating) return;
@@ -179,8 +189,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 {msg.role === "user" ? (
-                  <div className="bg-surface-container-high text-on-surface py-3 px-5 rounded-2xl rounded-tr-sm max-w-[80%] text-sm shadow-sm border border-white/5">
+                  <div className="group relative bg-surface-container-high text-on-surface py-3 px-5 rounded-2xl rounded-tr-sm max-w-[80%] text-sm shadow-sm border border-white/5">
                     {msg.content}
+                    <button
+                      onClick={() => handleCopy(msg.content, msg.id)}
+                      className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10"
+                      title="Copy"
+                    >
+                      {copiedId === msg.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-on-surface-variant" />}
+                    </button>
                   </div>
                 ) : (
                   <div className="flex gap-4 max-w-[90%] w-full">
@@ -190,9 +207,20 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                     </div>
                     {/* Bot message bubble */}
                     <div className="flex flex-col gap-2.5 flex-1">
-                      <div className="glass-panel text-on-surface py-4 px-5 rounded-2xl rounded-tl-sm text-sm leading-relaxed shadow-lg border border-white/5">
+                      <div className="glass-panel text-on-surface py-4 px-5 rounded-2xl rounded-tl-sm text-sm leading-relaxed shadow-lg border border-white/5 group/bot relative">
                         {renderMessageContent(msg.content)}
                         {msg.isStreaming && <span className="caret-blink"></span>}
+
+                        {/* Copy button */}
+                        {!msg.isStreaming && msg.content && (
+                          <button
+                            onClick={() => handleCopy(msg.content, msg.id)}
+                            className="absolute top-3 right-3 opacity-0 group-hover/bot:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10"
+                            title="Copy response"
+                          >
+                            {copiedId === msg.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-on-surface-variant" />}
+                          </button>
+                        )}
 
                         {/* Citation Sources panel */}
                         {msg.sources && msg.sources.length > 0 && (
@@ -265,6 +293,16 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             <div className="flex items-center gap-2 px-3 pt-2">
               <div className="bg-surface-container-high rounded-full p-1 flex items-center">
                 <button 
+                  onClick={() => setChatMode("auto")}
+                  className={`px-3 py-1 rounded-full font-sans text-[11px] font-semibold transition-all ${
+                    chatMode === "auto" 
+                      ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/10" 
+                      : "text-on-surface-variant hover:text-on-surface border border-transparent"
+                  }`}
+                >
+                  Auto
+                </button>
+                <button 
                   onClick={() => setChatMode("general")}
                   className={`px-3 py-1 rounded-full font-sans text-[11px] font-semibold transition-all ${
                     chatMode === "general" 
@@ -272,17 +310,27 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                       : "text-on-surface-variant hover:text-on-surface border border-transparent"
                   }`}
                 >
-                  General Q&amp;A
+                  General
                 </button>
                 <button 
-                  onClick={() => setChatMode("analytical")}
+                  onClick={() => setChatMode("fact_check")}
                   className={`px-3 py-1 rounded-full font-sans text-[11px] font-semibold transition-all ${
-                    chatMode === "analytical" 
+                    chatMode === "fact_check" 
+                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/10" 
+                      : "text-on-surface-variant hover:text-on-surface border border-transparent"
+                  }`}
+                >
+                  Fact Check
+                </button>
+                <button 
+                  onClick={() => setChatMode("document_qa")}
+                  className={`px-3 py-1 rounded-full font-sans text-[11px] font-semibold transition-all ${
+                    chatMode === "document_qa" 
                       ? "bg-tertiary/20 text-tertiary border border-tertiary/10" 
                       : "text-on-surface-variant hover:text-on-surface border border-transparent"
                   }`}
                 >
-                  Analytical Data
+                  Document Q&amp;A
                 </button>
               </div>
               

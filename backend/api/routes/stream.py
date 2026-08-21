@@ -106,7 +106,7 @@ async def chat_stream(request: Request, body: ChatRequest):
             sources = retrieval_result.sources
 
     # ─── Build Messages ─────────────────────────────────────────────────
-    system_prompt = ANALYTICAL_SYSTEM_PROMPT if body.mode == "analytical" else DEFAULT_SYSTEM_PROMPT
+    system_prompt = ANALYTICAL_SYSTEM_PROMPT if body.mode.value == "document_qa" else DEFAULT_SYSTEM_PROMPT
 
     query_with_history = cleaned_query
     if history:

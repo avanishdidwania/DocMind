@@ -19,8 +19,10 @@ from enum import Enum
 
 class ChatMode(str, Enum):
     """Types of chat interaction."""
-    general = "general"          # Open Q&A with document context
-    analytical = "analytical"    # Table/data focused analysis
+    auto = "auto"              # Router decides (costs 1 LLM call for classification)
+    general = "general"        # Direct LLM — no retrieval, no fact-check
+    fact_check = "fact_check"  # Fact verification via nolie-agent
+    document_qa = "document_qa"  # RAG over uploaded documents
 
 
 class SecurityVerdict(str, Enum):
@@ -39,7 +41,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(None, description="Existing session to continue")
     document_id: str | None = Field(None, description="Single document to chat about")
     document_ids: list[str] | None = Field(None, description="Multiple documents to chat across")
-    mode: ChatMode = Field(ChatMode.general, description="Chat mode")
+    mode: ChatMode = Field(ChatMode.auto, description="Skill mode: auto (router decides), general, fact_check, document_qa")
 
 
 class DocumentUploadResponse(BaseModel):

@@ -136,7 +136,7 @@ function App() {
   };
 
   // Send message using SSE stream
-  const handleSendMessage = async (text: string, mode: "general" | "analytical") => {
+  const handleSendMessage = async (text: string, mode: "auto" | "general" | "fact_check" | "document_qa") => {
     if (isGenerating) return;
 
     // Create user message state
@@ -168,7 +168,12 @@ function App() {
         mode: mode
       };
 
-      const response = await fetch(`${API_BASE}/chat/stream`, {
+      // Fact-check uses regular endpoint (nolie-agent doesn't stream)
+      // All other modes use streaming
+      const useStreaming = mode !== "fact_check";
+      const endpoint = useStreaming ? `${API_BASE}/chat/stream` : `${API_BASE}/chat`;
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
@@ -176,9 +181,36 @@ function App() {
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.detail || "Server failed to process stream");
+        throw new Error(errJson.detail || "Server failed to process request");
       }
 
+      // Non-streaming response (fact-check mode)
+      if (!useStreaming) {
+        const data = await response.json();
+        const meta = data.metadata || {};
+        if (meta.session_id || data.session_id) {
+          setSessionId(meta.session_id || data.session_id);
+        }
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMsgId
+              ? {
+                  ...msg,
+                  content: data.response,
+                  isStreaming: false,
+                  latency_ms: data.latency_ms,
+                  model_used: data.model_used,
+                  sources: data.sources,
+                }
+              : msg
+          )
+        );
+        setIsGenerating(false);
+        fetchDiagnostics();
+        return;
+      }
+
+      // Streaming response (SSE)
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) throw new Error("No response reader");
